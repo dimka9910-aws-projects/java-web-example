@@ -32,12 +32,13 @@ public class ExampleServiceImpl implements ExampleService {
         }
 
         return WebDataObjectDto.builder()
-                .id(2L)
+                .id(1L)
                 .data(data)
                 .port(environment.getProperty("local.server.port"))
                 .host(hostAdress)
                 .hostName(hostName)
                 .hostNameProperty(environment.getProperty("hostname"))
+                .additionalData("version 2")
                 .build();
 
 

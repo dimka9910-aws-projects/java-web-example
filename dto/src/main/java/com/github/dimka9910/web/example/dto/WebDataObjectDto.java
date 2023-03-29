@@ -22,5 +22,6 @@ public class WebDataObjectDto {
     private String host;
     private String hostName;
     private String hostNameProperty;
+    private String additionalData;
 
 }
