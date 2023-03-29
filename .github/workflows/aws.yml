@@ -36,8 +36,7 @@ env:
   ECR_REPOSITORY: jave-web-example-repository           # set this to your Amazon ECR repository name
   ECS_SERVICE: java-web-example-service                 # set this to your Amazon ECS service name
   ECS_CLUSTER: MyDemoClusterDimka9910                 # set this to your Amazon ECS cluster name
-  ECS_TASK_DEFINITION: java-web-example-task-definition # set this to the path to your Amazon ECS task definition
-                                               # file, e.g. .aws/task-definition.json
+  ECS_TASK_DEFINITION: ./java-web-example-task-definition.json # set this to the path to your Amazon ECS task definition
   CONTAINER_NAME: java-web-example-container           # set this to the name of the container in the
                                                # containerDefinitions section of your task definition
 
