@@ -5,7 +5,7 @@ on:
   #Trigger the workflow on push from the main branch
   push:
     branches:
-      - master
+      - dev/aws
 jobs:
   #Test's job
   tests:
