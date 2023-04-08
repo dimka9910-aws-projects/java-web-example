@@ -1,0 +1,224 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+# https://github.com/awslabs/aws-cloudformation-templates/blob/master/aws/services/ECS/FargateLaunchType/clusters/public-vpc.yml
+
+
+Conditions:
+  RepositoryExists:
+    Fn::Equals:
+      - ""
+      - !Join ['', ['arn:aws:ecr:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':repository/', !Ref 'ECRName']]
+
+Parameters:
+  VpcId:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /default/vpc-id
+  SubnetIds:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /default/subnet-ids
+  ApplicationName:
+    Type: String
+    Default: java-web-example
+  ECRName:
+    Type: String
+    Default: jave-web-example-repository
+  ECSClusterName:
+    Type: String
+    Default: JavaWebExampleCluster
+
+
+
+# ----------------------------------
+Resources:
+  # ECS Fargate cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref ECSClusterName
+      CapacityProviders:
+        - FARGATE
+
+  # ECR repository
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Condition: RepositoryExists
+    Properties:
+      RepositoryName: !Ref ECRName
+
+  #         ----------------------------------------------------------
+  # Application Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Join ["", [!Ref ApplicationName, "-load-balancer"]]
+      Subnets: !Split [",", !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Scheme: internet-facing
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Join ["", [!Ref ApplicationName, "-load-balancer"]]
+
+  # Security group for the ALB
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join ["", [!Ref ApplicationName, "-alb-sg"]]
+      GroupDescription: Security group for the ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  # Target group for the service
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join ["", [!Ref ApplicationName, "-target-group"]]
+      Port: 8080
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      Tags:
+        - Key: Name
+          Value: !Join ["", [!Ref ApplicationName, "-target-group"]]
+
+  LoadBalancerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref 'TargetGroup'
+          Type: 'forward'
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /*
+      ListenerArn: !Ref Listener
+      Priority: 1
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - LoadBalancer
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref 'TargetGroup'
+          Type: 'forward'
+      LoadBalancerArn: !Ref 'LoadBalancer'
+      Port: 80
+      Protocol: HTTP
+
+  #         ----------------------------------------------------------
+  # ECS Fargate service
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: LoadBalancerRule
+    Properties:
+      ServiceName: !Join ["", [!Ref ApplicationName, "-service"]]
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE  # In which ECS type we'll start service
+      DesiredCount: 1      # DesiredCount of instances
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: !Split [",", !Ref SubnetIds]
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+      LoadBalancers:
+        - ContainerName: !Join ["", [!Ref ApplicationName, "-container"]]
+          ContainerPort: 8080
+          TargetGroupArn: !Ref TargetGroup
+
+  # Security group for the service
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: ServiceSecurityGroup
+      GroupDescription: Security group for the service
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  #         ---------------------------------------------------------
+  # ECS Fargate task definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: java-web-example-task
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSExecutionRole
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ContainerDefinitions:
+        - Name: !Join ["", [!Ref ApplicationName, "-container"]]
+          Image: amazon/amazon-ecs-sample
+          PortMappings:
+            - ContainerPort: 8080
+
+
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join ["", [!Ref ApplicationName, "-execution-role"]]
+      AssumeRolePolicyDocument:  #HERE WE DEFINE WHICH ENTITIES (ECS tasks in our case) CAN ACCEPT THIS ROLE
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  ECSTaskExecutionPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Join ["", [!Ref ApplicationName, "-task-execution-policy"]]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: '*'
+      Roles:
+        - !Ref ECSExecutionRole
+
+
+Outputs:
+  # ALB URL
+  LoadBalancerDNSName:
+    Value: !GetAtt LoadBalancer.DNSName
+    Description: URL of the application load balancer
